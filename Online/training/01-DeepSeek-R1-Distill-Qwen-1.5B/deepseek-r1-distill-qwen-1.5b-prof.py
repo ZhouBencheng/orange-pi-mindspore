@@ -1,15 +1,21 @@
 import gradio as gr
 import mindspore
+import time
+from mindspore import Profiler
 from mindnlp.transformers import AutoModelForCausalLM, AutoTokenizer
 from mindnlp.transformers import TextIteratorStreamer
 from threading import Thread
+from mindnlp.peft import PeftModel
+
+# activate synchronization in pynative mode
+# mindspore.set_context(pynative_synchronize=True)
 
 # Load the tokenizer and model from MindNLP.
 # Note: To use MindNLP, you need to install it first. Ensure you are using the master branch of MindNLP,
 # which supports downloading the MindNLP-specific weights from Modelers.
-tokenizer = AutoTokenizer.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B", mirror="modelers", ms_dtype=mindspore.float16)
-model = AutoModelForCausalLM.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B", mirror="modelers", ms_dtype=mindspore.float16)
-
+tokenizer = AutoTokenizer.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B-FP16", mirror="modelers", ms_dtype=mindspore.float16)
+model = AutoModelForCausalLM.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B-FP16", mirror="modelers", ms_dtype=mindspore.float16)
+# model = PeftModel.from_pretrained(model, "./output/DeepSeek-R1-Distill-Qwen-1.5B/adapter_model_for_demo/") # adapter_model path
 
 system_prompt = "You are a helpful and friendly chatbot"
 
@@ -23,7 +29,12 @@ def build_input_from_chat_history(chat_history, msg: str):
 
 # Function to generate model predictions.
 def predict(message, history):
-    history_transformer_format = history + [[message, ""]]
+    profiler = Profiler(
+        start_profile=True,
+        output_path="./profiler_output",
+        profile_memory=True,
+        profile_communication=False
+    )
 
     # Formatting the input for the model.
     messages = build_input_from_chat_history(history, message)
@@ -44,15 +55,44 @@ def predict(message, history):
         num_beams=1,
         repetition_penalty=1.2
     )
+    start_time = time.perf_counter()
+    
     t = Thread(target=model.generate, kwargs=generate_kwargs)
     t.start()  # Starting the generation in a separate thread.
+    
+    first_token_time = None
+    token_count = 0
+    
     partial_message = ""
     for new_token in streamer:
+        if first_token_time is None:
+            mindspore.ops.synchronize()
+            first_token_time = time.perf_counter()
+            ttft = first_token_time - start_time
+        token_count += 1
         partial_message += new_token
         if '</s>' in partial_message:  # Breaking the loop if the stop token is generated.
             break
         yield partial_message
-
+    
+    mindspore.ops.synchronize()
+    end_time = time.perf_counter()
+    
+    e2e_latency = end_time - start_time
+    decode_time = end_time - first_token_time
+    throughput = token_count / decode_time
+    
+    print("\n========== Performance Summary ==========")
+    print(f"E2E Latency     : {e2e_latency:.3f} s")
+    print(f"TTFT            : {ttft:.3f} s")
+    print(f"Decode Time     : {decode_time:.3f} s")
+    print(f"Token Count     : {token_count}")
+    print(f"Throughput      : {throughput:.2f} tokens/s")
+    print("=========================================\n")
+    
+    profiler.stop()
+    profiler.analyse()
+    print("[Profiler] Results saved to ./profiler_output")
 
 # Setting up the Gradio chat interface.
 gr.ChatInterface(predict,

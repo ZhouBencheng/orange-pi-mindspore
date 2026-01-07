@@ -12,6 +12,8 @@ disable_multi_thread()
 model_id = "MindSpore-Lab/MiniCPM3-4B-FP16"
 tokenizer = MiniCPM3Tokenizer.from_pretrained(model_id, mirror='modelers', ms_dtype=mindspore.float16)
 model = MiniCPM3ForCausalLM.from_pretrained(model_id, mirror='modelers', ms_dtype=mindspore.float16)
+# tokenizer.pad_token_id = tokenizer.eos_token_id
+# model.config.pad_token_id = model.config.eos_token_id
 
 system_prompt = "You are a helpful and friendly chatbot"
 
@@ -33,14 +35,18 @@ def predict(message, history):
             return_tensors="ms",
             tokenizer=True
         )
-    streamer = TextIteratorStreamer(tokenizer, timeout=120, skip_prompt=True, skip_special_tokens=True)
+    # attention_mask = (input_ids != tokenizer.pad_token_id).astype(mindspore.int32)
+    streamer = TextIteratorStreamer(tokenizer, timeout=600, skip_prompt=True, skip_special_tokens=True)
     generate_kwargs = dict(
         input_ids=input_ids,
+        # attention_mask=attention_mask,
         streamer=streamer,
+        # pad_token_id=tokenizer.pad_token_id,
         max_new_tokens=1024,
         do_sample=True,
         top_p=0.7,
         temperature=0.7,
+        num_beams=1,
     )
     t = Thread(target=model.generate, kwargs=generate_kwargs)
     t.start()  # Starting the generation in a separate thread.

@@ -41,7 +41,7 @@ def predict(message, history):
     generate_kwargs = dict(
         input_ids=input_ids,
         streamer=streamer,
-        max_new_tokens=1024,
+        max_new_tokens=256,
         do_sample=True,
         top_p=0.9,
         temperature=0.1,

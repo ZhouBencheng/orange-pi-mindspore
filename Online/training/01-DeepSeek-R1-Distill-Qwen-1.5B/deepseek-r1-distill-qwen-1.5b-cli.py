@@ -3,13 +3,17 @@ import mindspore
 from mindnlp.transformers import AutoModelForCausalLM, AutoTokenizer
 from mindnlp.transformers import TextIteratorStreamer
 from threading import Thread
+from mindnlp.peft import PeftModel
+
+# activate synchronization in pynative mode
+# mindspore.set_context(pynative_synchronize=True)
 
 # Load the tokenizer and model from MindNLP.
 # Note: To use MindNLP, you need to install it first. Ensure you are using the master branch of MindNLP,
 # which supports downloading the MindNLP-specific weights from Modelers.
-tokenizer = AutoTokenizer.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B", mirror="modelers", ms_dtype=mindspore.float16)
-model = AutoModelForCausalLM.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B", mirror="modelers", ms_dtype=mindspore.float16)
-
+tokenizer = AutoTokenizer.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B-FP16", mirror="modelers", ms_dtype=mindspore.float16)
+model = AutoModelForCausalLM.from_pretrained("MindSpore-Lab/DeepSeek-R1-Distill-Qwen-1.5B-FP16", mirror="modelers", ms_dtype=mindspore.float16)
+# model = PeftModel.from_pretrained(model, "./output/DeepSeek-R1-Distill-Qwen-1.5B/adapter_model_for_demo/") # adapter_model path
 
 system_prompt = "You are a helpful and friendly chatbot"
 
@@ -28,11 +32,12 @@ def predict(message, history):
     # Formatting the input for the model.
     messages = build_input_from_chat_history(history, message)
     input_ids = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            return_tensors="ms",
-            tokenize=True
-        )
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_tensors="ms"
+    )
+
     streamer = TextIteratorStreamer(tokenizer, timeout=300, skip_prompt=True, skip_special_tokens=True)
     generate_kwargs = dict(
         input_ids=input_ids,
@@ -53,10 +58,26 @@ def predict(message, history):
             break
         yield partial_message
 
+def chat():
+    history = []
+    print("模型推理启动，输入 exit 退出\n")
 
-# Setting up the Gradio chat interface.
-gr.ChatInterface(predict,
-                 title="DeepSeek-R1-Distill-Qwen-1.5B",
-                 description="问几个问题",
-                 examples=['你是谁？', '你能做什么？']
-                 ).launch()  # Launching the web interface.
+    while True:
+        user_input = input("User: ")
+        if user_input.strip().lower() == "exit":
+            break
+
+        print("Assistant: ", end="", flush=True)
+        final_answer = ""
+
+        for partial in predict(user_input, history):
+            new_text = partial[len(final_answer):]
+            print(new_text, end="", flush=True)
+            final_answer = partial
+
+        print("\n")
+        history.append([user_input, final_answer])
+
+if __name__ == "__main__":
+    chat()
+
